@@ -19,6 +19,36 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = 8000
 
+    # Hosts y orígenes permitidos por la protección anti DNS-rebinding del transporte HTTP MCP.
+    # Incluye el dominio público del despliegue y los valores locales habituales.
+    allowed_hosts: list[str] = [
+        "openrta-mcp.gui11o.ovh",
+        "openrta-mcp.gui11o.ovh:*",
+        "*.gui11o.ovh",
+        "*.gui11o.ovh:*",
+        "192.168.100.181",
+        "192.168.100.181:*",
+        "localhost",
+        "localhost:*",
+        "127.0.0.1",
+        "127.0.0.1:*",
+        "[::1]",
+        "[::1]:*",
+    ]
+    allowed_origins: list[str] = [
+        "https://openrta-mcp.gui11o.ovh",
+        "https://openrta-mcp.gui11o.ovh:*",
+        "https://*.gui11o.ovh",
+        "http://192.168.100.181",
+        "http://192.168.100.181:*",
+        "http://localhost",
+        "http://localhost:*",
+        "http://127.0.0.1",
+        "http://127.0.0.1:*",
+        "http://[::1]",
+        "http://[::1]:*",
+    ]
+
     # Directorio local de caché (DuckDB y ficheros NDJSON / GTFS)
     data_dir: Path = Path.home() / ".cache" / "mcp-andalucia"
     duckdb_filename: str = "andalucia.duckdb"

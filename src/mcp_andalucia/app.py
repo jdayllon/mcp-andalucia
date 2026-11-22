@@ -8,6 +8,7 @@ from typing import AsyncIterator
 
 from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse
+from mcp.server.transport_security import TransportSecuritySettings
 
 from mcp_andalucia.clients.openrta import OpenRTAClient
 from mcp_andalucia.config import settings
@@ -20,8 +21,16 @@ setup_logging()
 logger = get_logger("http")
 
 mcp_server = create_mcp_server()
-# Montamos el app MCP en /mcp; la ruta interna debe ser "/" para que el mount en /mcp quede en /mcp
-mcp_http_app = mcp_server.streamable_http_app(streamable_http_path="/")
+# Montamos el app MCP en /mcp; la ruta interna debe ser "/" para que el mount en /mcp quede en /mcp.
+# Sin transport_security explícito, el SDK solo permite Host localhost y rechaza el dominio público con 421.
+mcp_http_app = mcp_server.streamable_http_app(
+    streamable_http_path="/",
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=settings.allowed_hosts,
+        allowed_origins=settings.allowed_origins,
+    ),
+)
 
 
 @asynccontextmanager
