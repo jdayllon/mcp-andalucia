@@ -269,10 +269,10 @@ def register_turismo_tools(
             for item in resp.get("results", []):
                 records.append({"bloque": bloque, **item})
 
-        # Enriquecer con ficha municipal SIMA, Declaraciones de Interés Turístico y Banderas Azules en DuckDB
+        # Enriquecer con ficha municipal SIMA, Declaraciones de Interés Turístico, Banderas Azules e Itinerarios Costeros en DuckDB
         try:
             if municipio or provincia:
-                sima_rows, decl_res, band_res = await asyncio.gather(
+                sima_rows, decl_res, band_res, cost_res = await asyncio.gather(
                     pat_client.get_municipio_sima(
                         municipio=municipio,
                         provincia=provincia,
@@ -289,6 +289,11 @@ def register_turismo_tools(
                         solo_ultimo_anio=True,
                         limite=n,
                     ),
+                    pat_client.search_itinerarios_costeros(
+                        provincia=provincia,
+                        municipio=municipio,
+                        limite=n,
+                    ),
                 )
                 for s in sima_rows:
                     records.append({"bloque": "ficha_municipal_sima", **s})
@@ -298,13 +303,16 @@ def register_turismo_tools(
                 resumen_totales["banderas_azules"] = band_res["total_coincidencias"]
                 for b in band_res["banderas_azules"]:
                     records.append({"bloque": "bandera_azul", **b})
+                resumen_totales["itinerarios_costeros"] = cost_res["total_devueltos"]
+                for c in cost_res["puntos_itinerario"]:
+                    records.append({"bloque": "itinerario_costero", **c})
         except Exception:
             pass
 
         return to_ndjson(
             records,
             meta={
-                "fuente": "OpenRTA + SIMA + Declaraciones Interés Turístico + Banderas Azules",
+                "fuente": "OpenRTA + SIMA + Declaraciones Interés Turístico + Banderas Azules + Itinerarios Costeros",
                 "destino": {"provincia": provincia, "municipio": municipio},
                 "totales_por_bloque": resumen_totales,
                 "devueltos": len(records),
@@ -499,5 +507,40 @@ def register_turismo_tools(
                 "anio_filtrado": res["anio_filtrado"],
                 "total_coincidencias": res["total_coincidencias"],
                 "devueltos": res["devueltos"],
+            },
+        )
+
+    @mcp.tool()
+    async def buscar_itinerarios_costeros(
+        ruta_id: str | None = None,
+        provincia: str | None = None,
+        municipio: str | None = None,
+        texto: str | None = None,
+        lat: float | None = None,
+        lon: float | None = None,
+        radio_km: float | None = None,
+        limite: int = 30,
+    ) -> str:
+        """Consulta en DuckDB los Itinerarios Turísticos Costeros (ATLAZUL - Junta de Andalucía) y sus puntos de interés geolocalizados.
+
+        Permite filtrar por `ruta_id` ('01', '02', '03'), `provincia`, `municipio`, `texto` libre (ej. 'faro', 'lonja', 'puerto')
+        o buscar los puntos costeros más cercanos a unas coordenadas (`lat`, `lon`, `radio_km`) con Haversine en DuckDB.
+        Devuelve los resultados en formato NDJSON.
+        """
+        res = await pat_client.search_itinerarios_costeros(
+            ruta_id=ruta_id,
+            provincia=provincia,
+            municipio=municipio,
+            texto=texto,
+            lat=lat,
+            lon=lon,
+            radio_km=radio_km,
+            limite=limite,
+        )
+        return to_ndjson(
+            res["puntos_itinerario"],
+            meta={
+                "fuente": "Junta de Andalucía - Itinerarios Turísticos Costeros (DuckDB)",
+                "devueltos": res["total_devueltos"],
             },
         )

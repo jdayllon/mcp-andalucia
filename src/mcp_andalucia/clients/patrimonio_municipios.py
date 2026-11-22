@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import re
 import time
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
@@ -619,4 +620,224 @@ class PatrimonioMunicipiosClient:
             "total_coincidencias": total,
             "devueltos": len(cleaned),
             "banderas_azules": cleaned,
+        }
+
+    async def resolve_itinerarios_costeros_xml_url(self, resource_or_xml_url: str | None = None) -> str:
+        """Resuelve la URL pública del XML de Itinerarios Turísticos Costeros desde CKAN."""
+        url = (resource_or_xml_url or settings.itinerarios_costeros_resource_url).strip()
+        if url.lower().endswith(".xml"):
+            return url.replace(
+                "gdc-pdpopendata-ckan.paas.junta-andalucia.es",
+                "www.juntadeandalucia.es",
+            )
+
+        match = RESOURCE_UUID_RE.search(url)
+        if not match:
+            return settings.itinerarios_costeros_xml_fallback_url
+
+        res_id = match.group(1)
+        api_url = f"https://www.juntadeandalucia.es/datosabiertos/portal/api/3/action/resource_show?id={res_id}"
+        try:
+            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+                resp = await client.get(api_url)
+                resp.raise_for_status()
+                dl_url = str((resp.json().get("result") or {}).get("url") or "").strip()
+                if dl_url:
+                    return dl_url.replace(
+                        "gdc-pdpopendata-ckan.paas.junta-andalucia.es",
+                        "www.juntadeandalucia.es",
+                    )
+        except Exception as exc:
+            logger.warning("No se pudo resolver resource_show de itinerarios costeros (%s), usando fallback", exc)
+
+        return settings.itinerarios_costeros_xml_fallback_url
+
+    async def ensure_itinerarios_costeros_loaded(
+        self,
+        url_override: str | None = None,
+        force_refresh: bool = False,
+    ) -> int:
+        """Descarga el XML de Itinerarios Turísticos Costeros (ATLAZUL), lo convierte a NDJSON y lo carga en DuckDB."""
+        cache_key = "junta:itinerarios_costeros"
+        if not force_refresh and not url_override and self.store.is_fresh(cache_key, settings.catalog_ttl_seconds):
+            try:
+                cnt = self.store.execute("SELECT COUNT(*) FROM itinerarios_costeros")[0][0]
+                if cnt > 0:
+                    return int(cnt)
+            except Exception:
+                pass
+
+        xml_url = await self.resolve_itinerarios_costeros_xml_url(url_override)
+        t0 = time.perf_counter()
+        async with httpx.AsyncClient(
+            timeout=25.0,
+            follow_redirects=True,
+            headers={"User-Agent": "mcp-andalucia/0.3"},
+        ) as client:
+            resp = await client.get(xml_url)
+            resp.raise_for_status()
+            xml_bytes = resp.content
+        logger.info(
+            "XML Itinerarios Turísticos Costeros descargado desde %s (%d bytes, %.1f ms)",
+            xml_url,
+            len(xml_bytes),
+            (time.perf_counter() - t0) * 1000,
+        )
+
+        return self.load_itinerarios_costeros_from_xml_bytes(xml_bytes, cache_key)
+
+    def load_itinerarios_costeros_from_xml_bytes(
+        self,
+        xml_bytes: bytes,
+        cache_key: str = "junta:itinerarios_costeros",
+    ) -> int:
+        """Extrae las rutas y recursos costeros del XML, genera `itinerarios_costeros.ndjson` y lo carga en DuckDB."""
+        root = ET.fromstring(xml_bytes)
+        records: list[dict[str, Any]] = []
+
+        for ruta in root.findall("ruta"):
+            ruta_id = (ruta.findtext("id") or ruta.findtext("codigo") or "").strip()
+            denom = (ruta.findtext("denominacion") or "").strip()
+            naturaleza = (ruta.findtext("naturaleza") or "").strip()
+            ruta_desc = (ruta.findtext("descripcion") or "").strip()
+            temas = [
+                (t.text or "").strip()
+                for t in ruta.findall("./temaList/tema")
+                if (t.text or "").strip()
+            ]
+            temas_str = ", ".join(temas)
+
+            recursos = ruta.findall("./recursoList/recurso")
+            for idx, rec in enumerate(recursos, start=1):
+                nombre = (rec.findtext("nombre") or "").strip()
+                tipo = (rec.findtext("tipo") or "").strip()
+                prov = (rec.findtext("./ubicacion/provincia-distrito") or "").strip()
+                muni = (rec.findtext("./ubicacion/municipio") or "").strip()
+                cats = [
+                    (c.text or "").strip()
+                    for c in rec.findall("./categoriaList/categoria")
+                    if (c.text or "").strip()
+                ]
+                cats_str = ", ".join(cats)
+                desc = (rec.findtext("descripcion") or "").strip()
+                lat = _to_float(rec.findtext("./coordenadas/latitud"))
+                lon = _to_float(rec.findtext("./coordenadas/longitud"))
+
+                records.append(
+                    {
+                        "ruta_id": ruta_id,
+                        "ruta_denominacion": denom,
+                        "ruta_naturaleza": naturaleza,
+                        "ruta_temas": temas_str,
+                        "ruta_descripcion": ruta_desc,
+                        "orden_punto": idx,
+                        "nombre": nombre,
+                        "tipo": tipo,
+                        "categorias": cats_str,
+                        "provincia": prov,
+                        "municipio": muni,
+                        "lat": lat,
+                        "lon": lon,
+                        "descripcion": desc,
+                        "norm_provincia": normalize_text(prov),
+                        "norm_municipio": normalize_text(muni),
+                        "norm_search": normalize_text(
+                            f"{denom} {nombre} {tipo} {cats_str} {prov} {muni} {desc}"
+                        ),
+                    }
+                )
+
+        ndjson_path = settings.ndjson_dir / "itinerarios_costeros.ndjson"
+        with ndjson_path.open("w", encoding="utf-8") as f:
+            for r in records:
+                f.write(json.dumps(r, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+        count = self.store.load_ndjson_table("itinerarios_costeros", ndjson_path)
+        self.store.mark_fresh(cache_key, count)
+        return count
+
+    async def search_itinerarios_costeros(
+        self,
+        *,
+        ruta_id: str | None = None,
+        provincia: str | None = None,
+        municipio: str | None = None,
+        texto: str | None = None,
+        lat: float | None = None,
+        lon: float | None = None,
+        radio_km: float | None = None,
+        url_recurso: str | None = None,
+        limite: int = 30,
+    ) -> dict[str, Any]:
+        """Consulta en DuckDB los Itinerarios Turísticos Costeros y sus puntos de interés geolocalizados."""
+        await self.ensure_itinerarios_costeros_loaded(url_override=url_recurso)
+
+        clauses: list[str] = ["1=1"]
+        params: list[Any] = []
+
+        if ruta_id:
+            clauses.append("ruta_id = ?")
+            params.append(ruta_id.strip().zfill(2) if ruta_id.strip().isdigit() else ruta_id.strip())
+        if provincia:
+            clauses.append("norm_provincia LIKE ?")
+            params.append(f"%{normalize_text(provincia)}%")
+        if municipio:
+            clauses.append("norm_municipio LIKE ?")
+            params.append(f"%{normalize_text(municipio)}%")
+        if texto:
+            clauses.append("norm_search LIKE ?")
+            params.append(f"%{normalize_text(texto)}%")
+
+        dist_expr = "NULL AS distancia_km"
+        dist_params: list[Any] = []
+        order_sql = "ruta_id ASC, orden_punto ASC"
+
+        if lat is not None and lon is not None:
+            dist_expr = """
+            ROUND(
+                6371.0 * 2.0 * ASIN(LEAST(1.0, SQRT(
+                    POWER(SIN(RADIANS(lat - ?) / 2.0), 2) +
+                    COS(RADIANS(?)) * COS(RADIANS(lat)) *
+                    POWER(SIN(RADIANS(lon - ?) / 2.0), 2)
+                ))),
+                2
+            ) AS distancia_km
+            """
+            dist_params = [float(lat), float(lat), float(lon)]
+            clauses.append("lat IS NOT NULL AND lon IS NOT NULL")
+            order_sql = "distancia_km ASC, ruta_id ASC, orden_punto ASC"
+
+        where_sql = " AND ".join(clauses)
+        rows = self.store.execute_dicts(
+            f"""
+            SELECT
+                ruta_id,
+                ruta_denominacion,
+                ruta_naturaleza,
+                ruta_temas,
+                orden_punto,
+                nombre,
+                tipo,
+                categorias,
+                provincia,
+                municipio,
+                lat,
+                lon,
+                descripcion,
+                {dist_expr}
+            FROM itinerarios_costeros
+            WHERE {where_sql}
+            ORDER BY {order_sql}
+            LIMIT ?
+            """,
+            dist_params + params + [max(1, min(limite, 100))],
+        )
+
+        if radio_km is not None and lat is not None and lon is not None:
+            rows = [r for r in rows if r.get("distancia_km") is not None and float(r["distancia_km"]) <= radio_km]
+
+        cleaned = [{k: v for k, v in r.items() if v not in (None, "")} for r in rows]
+        return {
+            "total_devueltos": len(cleaned),
+            "puntos_itinerario": cleaned,
         }

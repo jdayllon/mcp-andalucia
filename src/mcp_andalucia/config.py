@@ -99,6 +99,15 @@ class Settings(BaseSettings):
         "6b186c12-2fd9-450d-a325-02052e2fe352/resource/e93bbb0c-5b31-4c59-8cf0-801b59fea253/"
         "download/banderas_azules_2026-27.json"
     )
+    itinerarios_costeros_resource_url: str = (
+        "https://www.juntadeandalucia.es/datosabiertos/portal/dataset/"
+        "itinerarios-turisticos-costeros/resource/72a23333-7659-4c4f-8ff5-38547dec8617"
+    )
+    itinerarios_costeros_xml_fallback_url: str = (
+        "https://www.juntadeandalucia.es/datosabiertos/portal/dataset/"
+        "b49dd947-b2dc-429e-9840-930b7446cf0d/resource/72a23333-7659-4c4f-8ff5-38547dec8617/"
+        "download/atlazul-itinerarios-turisticos-costeros_230602.xml"
+    )
 
     # TTL de caché en segundos
     catalog_ttl_seconds: int = 86400  # 24h para catálogos OpenRTA y CTAN

@@ -16,7 +16,7 @@ from mcp_andalucia.server import create_mcp_server
 
 
 @pytest.mark.asyncio
-async def test_mcp_server_registers_all_19_tools():
+async def test_mcp_server_registers_all_20_tools():
     mcp = create_mcp_server()
     tools = await mcp.list_tools()
     tool_names = {t.name for t in tools}
@@ -33,6 +33,7 @@ async def test_mcp_server_registers_all_19_tools():
         "buscar_declaraciones_interes_turistico",
         "consultar_municipios_sima",
         "buscar_banderas_azules",
+        "buscar_itinerarios_costeros",
         "buscar_trenes_renfe",
         "buscar_autobuses_ctan",
         "consultar_conectividad_aerea",
@@ -287,4 +288,44 @@ async def test_declaraciones_and_sima_in_duckdb(tmp_path: Path, monkeypatch):
     assert res_b_latest["anio_filtrado"] == "2026"
     assert res_b_latest["total_coincidencias"] == 1
     assert res_b_latest["banderas_azules"][0]["nombre"] == "San Nicolás"
+
+    # 4. Probar carga XML y búsqueda de Itinerarios Turísticos Costeros en DuckDB
+    sample_xml = b"""<rutaList>
+        <ruta>
+            <id>02</id>
+            <codigo>02</codigo>
+            <denominacion>Itinerario de recursos turisticos-costeros de Ayamonte</denominacion>
+            <naturaleza>Terrestre</naturaleza>
+            <descripcion>Ruta por Ayamonte e Isla Cristina</descripcion>
+            <temaList><tema>Patrimonio arquitectonico</tema></temaList>
+            <recursoList>
+                <recurso>
+                    <nombre>Puerto pesquero de Isla Cristina</nombre>
+                    <tipo>Patrimonio arquitectonico</tipo>
+                    <ubicacion>
+                        <provincia-distrito>Huelva</provincia-distrito>
+                        <municipio>Isla Cristina</municipio>
+                    </ubicacion>
+                    <categoriaList><categoria>Puerto pesquero</categoria></categoriaList>
+                    <descripcion>Puerto historico sardinero y atunero.</descripcion>
+                    <coordenadas>
+                        <latitud>37.201917</latitud>
+                        <longitud>-7.326167</longitud>
+                    </coordenadas>
+                </recurso>
+            </recursoList>
+        </ruta>
+    </rutaList>"""
+    cnt_c = pat.load_itinerarios_costeros_from_xml_bytes(sample_xml)
+    assert cnt_c == 1
+
+    res_cost = await pat.search_itinerarios_costeros(
+        municipio="Isla Cristina",
+        lat=37.200,
+        lon=-7.325,
+        radio_km=5.0,
+    )
+    assert res_cost["total_devueltos"] == 1
+    assert res_cost["puntos_itinerario"][0]["nombre"] == "Puerto pesquero de Isla Cristina"
+    assert res_cost["puntos_itinerario"][0]["distancia_km"] < 1.0
     store.close()
