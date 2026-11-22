@@ -94,6 +94,11 @@ class Settings(BaseSettings):
     sima_municipios_xls_url: str = (
         "https://www.juntadeandalucia.es/institutodeestadisticaycartografia/sima/datos/smex99.xls"
     )
+    banderas_azules_json_url: str = (
+        "https://www.juntadeandalucia.es/datosabiertos/portal/dataset/"
+        "6b186c12-2fd9-450d-a325-02052e2fe352/resource/e93bbb0c-5b31-4c59-8cf0-801b59fea253/"
+        "download/banderas_azules_2026-27.json"
+    )
 
     # TTL de caché en segundos
     catalog_ttl_seconds: int = 86400  # 24h para catálogos OpenRTA y CTAN

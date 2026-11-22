@@ -5,6 +5,7 @@ Servidor **MCP (Model Context Protocol)** construido con **FastAPI**, **DuckDB**
 - **Oferta turística (OpenRTA)**: [API Registro de Turismo de Andalucía](https://datos.juntadeandalucia.es/api/v0/openrta/openapi.json)
 - **Declaraciones de Interés Turístico en Andalucía**: [Catálogo de Fiestas, Romerías y Municipios Turísticos (Junta de Andalucía)](https://www.juntadeandalucia.es/datosabiertos/portal/dataset/declaraciones-de-interes-turistico-en-andalucia/resource/827cb3e2-fe05-4c37-92d3-ed31f2935f35)
 - **Datos Municipales SIMA ("Andalucía pueblo a pueblo")**: [Fichas de los 785 municipios del IECA (`smex99.xls`)](https://www.juntadeandalucia.es/institutodeestadisticaycartografia/sima/datos/smex99.xls)
+- **Banderas Azules de Andalucía**: [Playas, puertos deportivos y embarcaciones (`banderas_azules_2026-27.json`)](https://www.juntadeandalucia.es/datosabiertos/portal/dataset/6b186c12-2fd9-450d-a325-02052e2fe352/resource/e93bbb0c-5b31-4c59-8cf0-801b59fea253/download/banderas_azules_2026-27.json)
 - **Autobuses interurbanos (CTAN)**: [Red de Consorcios de Transporte de Andalucía](https://api.ctan.es/doc/)
 - **Trenes AVE / Larga Distancia / Media Distancia (Renfe)**: [Open Data Renfe (GTFS + GTFS-RT)](https://data.renfe.com/dataset?res_format=JSON)
 - **Conectividad aérea (OpenSky Network)**: [OpenSky REST API](https://opensky-network.org)
@@ -63,6 +64,7 @@ El servidor quedará disponible en `http://127.0.0.1:8000/mcp` (Streamable HTTP)
 8. `buscar_en_registro`: comodín para otros tipos, consulta de catálogos y estado del dataset.
 9. `buscar_declaraciones_interes_turistico`: consulta en DuckDB (`read_csv` con delimitador `=`) de fiestas, romerías, semanas santas y municipios declarados de interés turístico.
 10. `consultar_municipios_sima`: ficha de los 785 municipios del SIMA (`smex99.xls`: coordenadas oficiales, altitud, población, plazas hoteleras, patrimonio IAPH + enlace a Guía Digital del IAPH y las 124 variables) y búsqueda de pueblos cercanos con Haversine en DuckDB.
+11. `buscar_banderas_azules`: consulta en DuckDB (`read_json_auto`) de playas, puertos deportivos y embarcaciones con Bandera Azul en Andalucía (última edición o histórico por año).
 
 ### Transporte entre destinos
 9. `buscar_trenes_renfe`: consulta SQL en DuckDB sobre el GTFS AVE/LD/MD de Renfe + retrasos en tiempo real.

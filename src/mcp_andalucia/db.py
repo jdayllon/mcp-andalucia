@@ -233,6 +233,20 @@ class DuckDBStore:
                 [str(ndjson_path)],
             )
 
+    def load_json_table(self, table_name: str, json_source: str | Path) -> int:
+        """Crea o reemplaza una tabla en DuckDB leyendo un fichero JSON/NDJSON con `read_json_auto`."""
+        t0 = time.perf_counter()
+        with self._lock:
+            self._conn.execute(
+                f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM read_json_auto(?)",
+                [str(json_source)],
+            )
+            count_row = self._conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()
+            count = int(count_row[0]) if count_row else 0
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        logger.info("DuckDB tabla '%s' cargada con read_json_auto: %d filas (%.1f ms)", table_name, count, elapsed_ms)
+        return count
+
     def get_cached_response(self, cache_key: str) -> Any | None:
         """Recupera una respuesta cacheada si no ha expirado."""
         now = time.time()

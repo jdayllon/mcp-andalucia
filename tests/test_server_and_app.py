@@ -16,7 +16,7 @@ from mcp_andalucia.server import create_mcp_server
 
 
 @pytest.mark.asyncio
-async def test_mcp_server_registers_all_18_tools():
+async def test_mcp_server_registers_all_19_tools():
     mcp = create_mcp_server()
     tools = await mcp.list_tools()
     tool_names = {t.name for t in tools}
@@ -32,6 +32,7 @@ async def test_mcp_server_registers_all_18_tools():
         "buscar_en_registro",
         "buscar_declaraciones_interes_turistico",
         "consultar_municipios_sima",
+        "buscar_banderas_azules",
         "buscar_trenes_renfe",
         "buscar_autobuses_ctan",
         "consultar_conectividad_aerea",
@@ -252,4 +253,38 @@ async def test_declaraciones_and_sima_in_duckdb(tmp_path: Path, monkeypatch):
     cercanos = await pat.find_nearby_municipios_sima(municipio_origen="Abla", radio_km=10.0)
     assert cercanos["total_en_radio"] == 2
     assert cercanos["municipios"][1]["municipio"] == "Abrucena"
+
+    # 3. Probar carga y búsqueda de Banderas Azules con DuckDB read_json_auto
+    banderas_file = tmp_path / "banderas_sample.json"
+    banderas_file.write_text(
+        json.dumps(
+            [
+                {
+                    "Provincia": "Almería",
+                    "Municipio": "Adra",
+                    "Categoría": "Playa",
+                    "Bandera azul": "San Nicolás",
+                    "Año": "2023",
+                    "Notas": "",
+                },
+                {
+                    "Provincia": "Almería",
+                    "Municipio": "Adra",
+                    "Categoría": "Playa",
+                    "Bandera azul": "San Nicolás",
+                    "Año": "2026",
+                    "Notas": "Accesible",
+                },
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    cnt_b = pat.load_banderas_azules_from_json_with_duckdb(banderas_file)
+    assert cnt_b == 2
+
+    res_b_latest = await pat.search_banderas_azules(municipio="Adra", solo_ultimo_anio=True)
+    assert res_b_latest["anio_filtrado"] == "2026"
+    assert res_b_latest["total_coincidencias"] == 1
+    assert res_b_latest["banderas_azules"][0]["nombre"] == "San Nicolás"
     store.close()

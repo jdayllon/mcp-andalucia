@@ -480,3 +480,143 @@ class PatrimonioMunicipiosClient:
             "total_en_radio": len(filtered),
             "municipios": filtered[: max(1, min(limite, 50))],
         }
+
+    async def ensure_banderas_azules_loaded(
+        self,
+        url_override: str | None = None,
+        force_refresh: bool = False,
+    ) -> int:
+        """Descarga `banderas_azules_2026-27.json` de la Junta y lo carga en DuckDB con `read_json_auto`."""
+        cache_key = "junta:banderas_azules"
+        if not force_refresh and not url_override and self.store.is_fresh(cache_key, settings.catalog_ttl_seconds):
+            try:
+                cnt = self.store.execute("SELECT COUNT(*) FROM banderas_azules")[0][0]
+                if cnt > 0:
+                    return int(cnt)
+            except Exception:
+                pass
+
+        json_url = (url_override or settings.banderas_azules_json_url).strip()
+        raw_json_path = settings.ndjson_dir / "banderas_azules_raw.json"
+
+        t0 = time.perf_counter()
+        async with httpx.AsyncClient(
+            timeout=25.0,
+            follow_redirects=True,
+            headers={"User-Agent": "mcp-andalucia/0.3"},
+        ) as client:
+            resp = await client.get(json_url)
+            resp.raise_for_status()
+            raw_json_path.write_bytes(resp.content)
+        logger.info(
+            "JSON Banderas Azules descargado desde %s (%d bytes, %.1f ms)",
+            json_url,
+            len(resp.content),
+            (time.perf_counter() - t0) * 1000,
+        )
+
+        return self.load_banderas_azules_from_json_with_duckdb(raw_json_path, cache_key)
+
+    def load_banderas_azules_from_json_with_duckdb(
+        self,
+        json_source: str | Path,
+        cache_key: str = "junta:banderas_azules",
+    ) -> int:
+        """Carga el fichero JSON con `read_json_auto` de DuckDB, normaliza columnas y exporta a NDJSON."""
+        self.store.load_json_table("banderas_azules_raw", json_source)
+        with self.store._lock:
+            self.store._conn.execute(
+                """
+                CREATE OR REPLACE TABLE banderas_azules AS
+                SELECT
+                    TRIM(CAST(COALESCE("Provincia", '') AS VARCHAR)) AS provincia,
+                    TRIM(CAST(COALESCE("Municipio", '') AS VARCHAR)) AS municipio,
+                    TRIM(CAST(COALESCE("Categoría", '') AS VARCHAR)) AS categoria,
+                    TRIM(CAST(COALESCE("Bandera azul", '') AS VARCHAR)) AS nombre,
+                    TRIM(CAST(COALESCE("Año", '') AS VARCHAR)) AS anio,
+                    TRIM(CAST(COALESCE("Notas", '') AS VARCHAR)) AS notas
+                FROM banderas_azules_raw
+                WHERE TRIM(CAST(COALESCE("Bandera azul", '') AS VARCHAR)) <> ''
+                """
+            )
+            self.store._conn.execute("DROP TABLE IF EXISTS banderas_azules_raw")
+
+        rows = self.store.execute_dicts("SELECT * FROM banderas_azules")
+        ndjson_path = settings.ndjson_dir / "banderas_azules.ndjson"
+        with ndjson_path.open("w", encoding="utf-8") as f:
+            for r in rows:
+                r["norm_provincia"] = normalize_text(r.get("provincia"))
+                r["norm_municipio"] = normalize_text(r.get("municipio"))
+                r["norm_categoria"] = normalize_text(r.get("categoria"))
+                r["norm_search"] = normalize_text(
+                    f"{r.get('nombre')} {r.get('municipio')} {r.get('provincia')} {r.get('categoria')} {r.get('notas')}"
+                )
+                f.write(json.dumps(r, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+        count = self.store.load_ndjson_table("banderas_azules", ndjson_path)
+        self.store.mark_fresh(cache_key, count)
+        return count
+
+    async def search_banderas_azules(
+        self,
+        *,
+        provincia: str | None = None,
+        municipio: str | None = None,
+        categoria: str | None = None,
+        anio: str | None = None,
+        solo_ultimo_anio: bool = True,
+        texto: str | None = None,
+        url_recurso: str | None = None,
+        limite: int = 30,
+    ) -> dict[str, Any]:
+        """Consulta en DuckDB las playas, puertos deportivos y embarcaciones con Bandera Azul en Andalucía."""
+        await self.ensure_banderas_azules_loaded(url_override=url_recurso)
+
+        target_year = anio.strip() if anio else None
+        if not target_year and solo_ultimo_anio:
+            max_row = self.store.execute("SELECT MAX(anio) FROM banderas_azules")
+            if max_row and max_row[0][0]:
+                target_year = str(max_row[0][0])
+
+        clauses: list[str] = ["1=1"]
+        params: list[Any] = []
+        if target_year:
+            clauses.append("anio = ?")
+            params.append(target_year)
+        if provincia:
+            clauses.append("norm_provincia LIKE ?")
+            params.append(f"%{normalize_text(provincia)}%")
+        if municipio:
+            clauses.append("norm_municipio LIKE ?")
+            params.append(f"%{normalize_text(municipio)}%")
+        if categoria:
+            clauses.append("norm_categoria LIKE ?")
+            params.append(f"%{normalize_text(categoria)}%")
+        if texto:
+            clauses.append("norm_search LIKE ?")
+            params.append(f"%{normalize_text(texto)}%")
+
+        where_sql = " AND ".join(clauses)
+        total_row = self.store.execute(
+            f"SELECT COUNT(*) FROM banderas_azules WHERE {where_sql}",
+            params,
+        )
+        total = int(total_row[0][0]) if total_row else 0
+
+        rows = self.store.execute_dicts(
+            f"""
+            SELECT nombre, categoria, municipio, provincia, anio, notas
+            FROM banderas_azules
+            WHERE {where_sql}
+            ORDER BY anio DESC, provincia ASC, municipio ASC, nombre ASC
+            LIMIT ?
+            """,
+            params + [max(1, min(limite, 100))],
+        )
+        cleaned = [{k: v for k, v in r.items() if v not in (None, "")} for r in rows]
+        return {
+            "anio_filtrado": target_year or "todos",
+            "total_coincidencias": total,
+            "devueltos": len(cleaned),
+            "banderas_azules": cleaned,
+        }

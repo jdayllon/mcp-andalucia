@@ -269,10 +269,10 @@ def register_turismo_tools(
             for item in resp.get("results", []):
                 records.append({"bloque": bloque, **item})
 
-        # Enriquecer con ficha municipal SIMA y Declaraciones de Interés Turístico en DuckDB
+        # Enriquecer con ficha municipal SIMA, Declaraciones de Interés Turístico y Banderas Azules en DuckDB
         try:
             if municipio or provincia:
-                sima_rows, decl_res = await asyncio.gather(
+                sima_rows, decl_res, band_res = await asyncio.gather(
                     pat_client.get_municipio_sima(
                         municipio=municipio,
                         provincia=provincia,
@@ -283,19 +283,28 @@ def register_turismo_tools(
                         municipio=municipio,
                         limite=n,
                     ),
+                    pat_client.search_banderas_azules(
+                        provincia=provincia,
+                        municipio=municipio,
+                        solo_ultimo_anio=True,
+                        limite=n,
+                    ),
                 )
                 for s in sima_rows:
                     records.append({"bloque": "ficha_municipal_sima", **s})
                 resumen_totales["declaraciones_interes_turistico"] = decl_res["total_coincidencias"]
                 for d in decl_res["declaraciones"]:
                     records.append({"bloque": "declaracion_interes_turistico", **d})
+                resumen_totales["banderas_azules"] = band_res["total_coincidencias"]
+                for b in band_res["banderas_azules"]:
+                    records.append({"bloque": "bandera_azul", **b})
         except Exception:
             pass
 
         return to_ndjson(
             records,
             meta={
-                "fuente": "OpenRTA + SIMA + Declaraciones Interés Turístico",
+                "fuente": "OpenRTA + SIMA + Declaraciones Interés Turístico + Banderas Azules",
                 "destino": {"provincia": provincia, "municipio": municipio},
                 "totales_por_bloque": resumen_totales,
                 "devueltos": len(records),
@@ -455,5 +464,40 @@ def register_turismo_tools(
                 "fuente": "SIMA IECA - Andalucía pueblo a pueblo (DuckDB)",
                 "accion": "ficha",
                 "devueltos": len(rows),
+            },
+        )
+
+    @mcp.tool()
+    async def buscar_banderas_azules(
+        provincia: str | None = None,
+        municipio: str | None = None,
+        categoria: str | None = None,
+        anio: str | None = None,
+        solo_ultimo_anio: bool = True,
+        texto: str | None = None,
+        limite: int = 30,
+    ) -> str:
+        """Consulta en DuckDB las playas, puertos deportivos y embarcaciones con Bandera Azul en Andalucía.
+
+        Por defecto (`solo_ultimo_anio=True`) devuelve las banderas azules de la última edición disponible;
+        pon `solo_ultimo_anio=False` o indica `anio` (ej. '2026', '2025') para consultar el histórico.
+        Devuelve los resultados en formato NDJSON.
+        """
+        res = await pat_client.search_banderas_azules(
+            provincia=provincia,
+            municipio=municipio,
+            categoria=categoria,
+            anio=anio,
+            solo_ultimo_anio=solo_ultimo_anio,
+            texto=texto,
+            limite=limite,
+        )
+        return to_ndjson(
+            res["banderas_azules"],
+            meta={
+                "fuente": "Junta de Andalucía - Banderas Azules (DuckDB)",
+                "anio_filtrado": res["anio_filtrado"],
+                "total_coincidencias": res["total_coincidencias"],
+                "devueltos": res["devueltos"],
             },
         )
