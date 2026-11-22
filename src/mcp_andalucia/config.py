@@ -67,6 +67,20 @@ class Settings(BaseSettings):
     opensky_client_id: str | None = None
     opensky_client_secret: str | None = None
 
+    # APIs de transporte urbano (TUSSAM Sevilla, EMT Málaga y NAP Ministerio de Transportes)
+    tussam_db_url: str = "https://raw.githubusercontent.com/686f6c61/API-TUSSAM/main/data/tussam.db"
+    tussam_base_url: str = "https://reddelineas.tussam.es"
+    tussam_proxy_url: str | None = None
+    emt_malaga_lineas_paradas_url: str = (
+        "https://datosabiertos.malaga.eu/recursos/transporte/EMT/EMTLineasYParadas/lineasyparadas.csv"
+    )
+    emt_malaga_realtime_url: str = (
+        "https://datosabiertos.malaga.eu/recursos/transporte/EMT/EMTlineasUbicaciones/lineasyubicaciones.geojson"
+    )
+    nap_base_url: str = "https://nap.transportes.gob.es/api"
+    nap_api_key: str | None = None
+    nominatim_url: str = "https://nominatim.openstreetmap.org/search"
+
     # TTL de caché en segundos
     catalog_ttl_seconds: int = 86400  # 24h para catálogos OpenRTA y CTAN
     renfe_gtfs_ttl_seconds: int = 86400  # 24h para GTFS estático de Renfe

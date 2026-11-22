@@ -3,11 +3,31 @@
 from __future__ import annotations
 
 import json
+import math
 import unicodedata
 from functools import lru_cache
 from typing import Any, Iterable
 
 from pyproj import Transformer
+
+EARTH_RADIUS_M = 6_371_000.0
+
+
+def bounding_box(lat: float, lon: float, radius_m: float) -> tuple[float, float, float, float]:
+    """Calcula la caja delimitadora (lat_min, lat_max, lon_min, lon_max) para un radio en metros."""
+    dlat = radius_m / 111_320.0
+    cos_lat = max(0.01, abs(math.cos(math.radians(lat))))
+    dlon = radius_m / (111_320.0 * cos_lat)
+    return (lat - dlat, lat + dlat, lon - dlon, lon + dlon)
+
+
+def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Calcula la distancia geodésica Haversine en metros entre dos coordenadas WGS84."""
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2.0) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2.0) ** 2
+    return 2.0 * EARTH_RADIUS_M * math.asin(min(1.0, math.sqrt(a)))
 
 
 @lru_cache(maxsize=1)

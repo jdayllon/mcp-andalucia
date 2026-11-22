@@ -9,12 +9,13 @@ from fastapi.testclient import TestClient
 from mcp_andalucia.app import app
 from mcp_andalucia.clients.opensky import resolve_airport_icao
 from mcp_andalucia.clients.renfe import RenfeClient
+from mcp_andalucia.clients.urbano import UrbanoClient
 from mcp_andalucia.db import DuckDBStore
 from mcp_andalucia.server import create_mcp_server
 
 
 @pytest.mark.asyncio
-async def test_mcp_server_registers_all_12_tools():
+async def test_mcp_server_registers_all_16_tools():
     mcp = create_mcp_server()
     tools = await mcp.list_tools()
     tool_names = {t.name for t in tools}
@@ -32,6 +33,10 @@ async def test_mcp_server_registers_all_12_tools():
         "buscar_autobuses_ctan",
         "consultar_conectividad_aerea",
         "recomendar_transporte_entre_destinos",
+        "buscar_paradas_urbanas_cercanas",
+        "consultar_tiempo_real_bus_urbano",
+        "consultar_linea_urbana",
+        "catalogo_nap_transporte_urbano",
     }
     assert expected == tool_names
 
@@ -96,4 +101,81 @@ async def test_renfe_duckdb_query_from_ndjson(tmp_path: Path, monkeypatch):
     assert len(res["trenes"]) == 1
     assert res["trenes"][0]["hora_salida"] == "09:00:00"
     assert res["trenes"][0]["hora_llegada"] == "09:45:00"
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_urbano_haversine_and_street_fallback_in_duckdb(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("mcp_andalucia.config.settings.data_dir", tmp_path)
+    store = DuckDBStore(db_path=tmp_path / "urbano_test.duckdb")
+    urbano = UrbanoClient(store=store)
+
+    stops = [
+        {
+            "ciudad": "sevilla",
+            "codigo": "43",
+            "nombre": "Recaredo (Puerta Carmona)",
+            "direccion": "Calle Recaredo 6-7",
+            "cp": "41003",
+            "lat": 37.389663,
+            "lon": -5.984265,
+            "lineas": "01,C4",
+            "norm_search": "43 recaredo (puerta carmona) calle recaredo 6-7 41003",
+        },
+        {
+            "ciudad": "sevilla",
+            "codigo": "999",
+            "nombre": "Lejana Cartuja",
+            "direccion": "Isla de la Cartuja",
+            "cp": "41092",
+            "lat": 37.410000,
+            "lon": -6.010000,
+            "lineas": "C1",
+            "norm_search": "999 lejana cartuja isla de la cartuja 41092",
+        },
+    ]
+    line_stops = [
+        {
+            "ciudad": "sevilla",
+            "linea": "C4",
+            "nombre_linea": "Circular Interior",
+            "sentido": "1",
+            "orden": 1,
+            "codigo_parada": "43",
+            "nombre_parada": "Recaredo (Puerta Carmona)",
+            "direccion": "Calle Recaredo 6-7",
+            "lat": 37.389663,
+            "lon": -5.984265,
+        }
+    ]
+    urbano._save_city_ndjson_and_duckdb("sevilla", stops, line_stops, "urbano:city:sevilla")
+
+    # 1. Búsqueda por coordenadas exactas (Nivel 1: Haversine + Bounding Box)
+    res_coords = await urbano.find_nearby_stops(
+        ciudad="sevilla",
+        lat=37.3891,
+        lon=-5.9845,
+        radio_metros=300,
+        incluir_tiempo_real=False,
+    )
+    assert res_coords["ubicacion_resuelta"]["precision"] == "coordenadas_exactas"
+    assert len(res_coords["paradas"]) == 1
+    assert res_coords["paradas"][0]["codigo"] == "43"
+    assert res_coords["paradas"][0]["distancia_metros"] < 100
+
+    # 2. Búsqueda sin coordenadas (Nivel 2: fallback por callejero en DuckDB)
+    res_street = await urbano.find_nearby_stops(
+        ciudad="sevilla",
+        direccion_o_lugar="CL Recaredo",
+        radio_metros=300,
+        incluir_tiempo_real=False,
+    )
+    assert res_street["ubicacion_resuelta"]["precision"] == "callejero_duckdb"
+    assert len(res_street["paradas"]) == 1
+    assert res_street["paradas"][0]["codigo"] == "43"
+
+    # 3. Consulta de línea
+    res_line = await urbano.get_line_stops(ciudad="sevilla", linea="C4")
+    assert res_line["total_paradas"] == 1
+    assert res_line["paradas"][0]["codigo_parada"] == "43"
     store.close()

@@ -58,6 +58,50 @@ class DuckDBStore:
                 )
                 """
             )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS geocoding_cache (
+                    query_norm VARCHAR PRIMARY KEY,
+                    lat DOUBLE NOT NULL,
+                    lon DOUBLE NOT NULL,
+                    display_name VARCHAR,
+                    precision VARCHAR NOT NULL,
+                    updated_at DOUBLE NOT NULL
+                )
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS urban_stops (
+                    ciudad VARCHAR NOT NULL,
+                    codigo VARCHAR NOT NULL,
+                    nombre VARCHAR NOT NULL,
+                    direccion VARCHAR,
+                    cp VARCHAR,
+                    lat DOUBLE NOT NULL,
+                    lon DOUBLE NOT NULL,
+                    lineas VARCHAR,
+                    norm_search VARCHAR NOT NULL,
+                    PRIMARY KEY (ciudad, codigo)
+                )
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS urban_line_stops (
+                    ciudad VARCHAR NOT NULL,
+                    linea VARCHAR NOT NULL,
+                    nombre_linea VARCHAR,
+                    sentido VARCHAR NOT NULL,
+                    orden INTEGER NOT NULL,
+                    codigo_parada VARCHAR NOT NULL,
+                    nombre_parada VARCHAR NOT NULL,
+                    direccion VARCHAR,
+                    lat DOUBLE,
+                    lon DOUBLE
+                )
+                """
+            )
 
     def is_fresh(self, key: str, ttl_seconds: int) -> bool:
         """Comprueba si una clave de caché sigue vigente según su TTL."""

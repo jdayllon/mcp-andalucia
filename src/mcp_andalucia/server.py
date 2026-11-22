@@ -8,22 +8,25 @@ from mcp_andalucia.clients.ctan import CTANClient
 from mcp_andalucia.clients.openrta import CATALOG_ENDPOINTS, OpenRTAClient
 from mcp_andalucia.clients.opensky import OpenSkyClient
 from mcp_andalucia.clients.renfe import RenfeClient
+from mcp_andalucia.clients.urbano import UrbanoClient
 from mcp_andalucia.config import settings
 from mcp_andalucia.tools.transporte import register_transporte_tools
 from mcp_andalucia.tools.turismo import register_turismo_tools
+from mcp_andalucia.tools.urbano import register_urbano_tools
 from mcp_andalucia.utils import to_ndjson
 
 
 def create_mcp_server() -> MCPServer:
-    """Construye y configura el servidor MCP con sus 12 tools, resources y prompts."""
+    """Construye y configura el servidor MCP con sus 16 tools, resources y prompts."""
     mcp = MCPServer(
         name=settings.app_name,
         version=settings.version,
         instructions=(
-            "Servidor MCP para planificar itinerarios turísticos por Andalucía usando datos oficiales "
-            "(OpenRTA de la Junta de Andalucía, autobuses interurbanos CTAN, trenes AVE/LD/MD Renfe "
-            "y conectividad aérea OpenSky). Todas las colecciones se devuelven en formato NDJSON. "
-            "No incluye transporte urbano."
+            "Servidor MCP para planificar itinerarios turísticos por Andalucía usando datos oficiales: "
+            "OpenRTA (Junta de Andalucía), autobuses interurbanos CTAN, trenes AVE/LD/MD Renfe, "
+            "conectividad aérea OpenSky y transporte urbano local (TUSSAM Sevilla, EMT Málaga y redes GTFS "
+            "del NAP como AUCORSA Córdoba, Granada y Metros andaluces) con cálculo espacial Haversine en DuckDB. "
+            "Todas las colecciones se devuelven en formato NDJSON."
         ),
     )
 
@@ -31,9 +34,11 @@ def create_mcp_server() -> MCPServer:
     renfe = RenfeClient()
     ctan = CTANClient()
     opensky = OpenSkyClient()
+    urbano = UrbanoClient()
 
     register_turismo_tools(mcp, openrta)
     register_transporte_tools(mcp, renfe, ctan, opensky)
+    register_urbano_tools(mcp, urbano)
 
     @mcp.resource("openrta://catalogos/{campo}", mime_type="application/x-ndjson")
     async def catalogo_openrta(campo: str) -> str:
@@ -59,9 +64,10 @@ def create_mcp_server() -> MCPServer:
             "guías, actividades, restauración y oficinas de turismo.\n"
             "2. Si necesitas filtrar guías por idioma, usa `buscar_guias_turisticos`, y para actividades "
             "específicas usa `buscar_actividades_turisticas`.\n"
-            "3. Para enlazar cada par de destinos consecutivos, llama a `recomendar_transporte_entre_destinos` "
-            "(no incluyas transporte urbano).\n"
-            "4. Presenta el itinerario día a día citando únicamente establecimientos, guías, servicios y "
+            "3. Para enlazar cada par de destinos consecutivos, llama a `recomendar_transporte_entre_destinos`.\n"
+            "4. Para moverse dentro de la ciudad desde el alojamiento o monumento, usa `buscar_paradas_urbanas_cercanas` "
+            "(pasando `lat`/`lon` o la `direccion_o_lugar`).\n"
+            "5. Presenta el itinerario día a día citando únicamente establecimientos, guías, servicios y "
             "horarios reales devueltos por las herramientas."
         )
 

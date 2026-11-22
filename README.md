@@ -6,8 +6,12 @@ Servidor **MCP (Model Context Protocol)** construido con **FastAPI**, **DuckDB**
 - **Autobuses interurbanos (CTAN)**: [Red de Consorcios de Transporte de Andalucía](https://api.ctan.es/doc/)
 - **Trenes AVE / Larga Distancia / Media Distancia (Renfe)**: [Open Data Renfe (GTFS + GTFS-RT)](https://data.renfe.com/dataset?res_format=JSON)
 - **Conectividad aérea (OpenSky Network)**: [OpenSky REST API](https://opensky-network.org)
+- **Transporte urbano (TUSSAM Sevilla, EMT Málaga y NAP Ministerio de Transportes)**:
+  - [API-TUSSAM (`686f6c61/API-TUSSAM`)](https://github.com/686f6c61/API-TUSSAM)
+  - [Datos Abiertos EMT Málaga](https://datosabiertos.malaga.eu/dataset?tags=EMT)
+  - [Punto de Acceso Nacional (NAP) — AUCORSA Córdoba, Granada, Metros andaluces](https://nap.transportes.gob.es)
 
-> **Nota**: No incluye transporte urbano. Todas las respuestas de colecciones utilizan formato **NDJSON** (una línea `{"_meta": ...}` seguida de una línea JSON por registro) y los catálogos y el GTFS de Renfe se almacenan en **DuckDB** vía ficheros **NDJSON**.
+> **Nota**: Todas las respuestas de colecciones utilizan formato **NDJSON** (una línea `{"_meta": ...}` seguida de una línea JSON por registro). Los catálogos, redes urbanas y el GTFS de Renfe se almacenan en **DuckDB** vía ficheros **NDJSON**, con motor de cercanía **Bounding Box + Haversine** y resolución de direcciones en 3 niveles (coordenadas exactas → callejero DuckDB → geocodificación OSM cacheada).
 
 ## Instalación y ejecución
 
@@ -28,6 +32,7 @@ uv run mcp-andalucia --transport stdio
 - `MCP_ANDALUCIA_RESPONSE_CACHE_TTL_SECONDS`: TTL en segundos para caché de respuestas de búsqueda/horarios (por defecto `900`, 15 min).
 - `MCP_ANDALUCIA_LOG_LEVEL`: nivel de logs (`DEBUG`, `INFO`, `WARNING`, `ERROR`; por defecto `INFO`).
 - `MCP_ANDALUCIA_LOG_FORMAT`: formato de logs (`text` o `json`; por defecto `text`).
+- `MCP_ANDALUCIA_NAP_API_KEY`: clave `ApiKey` del Punto de Acceso Nacional (`nap.transportes.gob.es`) para cargar GTFS urbanos (Córdoba AUCORSA, Granada, Metros, etc.).
 - `MCP_ANDALUCIA_OPENSKY_CLIENT_ID` y `MCP_ANDALUCIA_OPENSKY_CLIENT_SECRET`: credenciales OAuth2 opcionales para OpenSky.
 - `MCP_ANDALUCIA_HOST` / `MCP_ANDALUCIA_PORT`: host y puerto HTTP (por defecto `127.0.0.1:8000`).
 
@@ -60,6 +65,12 @@ El servidor quedará disponible en `http://127.0.0.1:8000/mcp` (Streamable HTTP)
 10. `buscar_autobuses_ctan`: horarios interurbanos en los 9 Consorcios Metropolitanos de Andalucía.
 11. `consultar_conectividad_aerea`: rutas recientes observadas en aeropuertos andaluces vía OpenSky.
 12. `recomendar_transporte_entre_destinos`: comparativa multimodal (Renfe + CTAN + OpenSky) entre dos destinos.
+
+### Transporte urbano local (con Haversine en DuckDB)
+13. `buscar_paradas_urbanas_cercanas`: paradas de autobús/metro cercanas a coordenadas `lat`/`lon` o a una calle/CP (TUSSAM Sevilla, EMT Málaga, AUCORSA Córdoba, Granada, Metros).
+14. `consultar_tiempo_real_bus_urbano`: tiempos de llegada en tiempo real en Sevilla (TUSSAM) y posición GPS en tiempo real en Málaga (EMT).
+15. `consultar_linea_urbana`: recorrido completo y paradas ordenadas de cualquier línea urbana.
+16. `catalogo_nap_transporte_urbano`: listado e indexación bajo demanda en DuckDB de cualquier dataset GTFS andaluz del NAP.
 
 ## Tests
 
