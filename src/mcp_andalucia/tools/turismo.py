@@ -272,7 +272,7 @@ def register_turismo_tools(
         # Enriquecer con ficha municipal SIMA, Declaraciones de Interés Turístico, Banderas Azules e Itinerarios Costeros en DuckDB
         try:
             if municipio or provincia:
-                sima_rows, decl_res, band_res, cost_res = await asyncio.gather(
+                sima_rows, decl_res, band_res, cost_res, rural_res = await asyncio.gather(
                     pat_client.get_municipio_sima(
                         municipio=municipio,
                         provincia=provincia,
@@ -294,6 +294,11 @@ def register_turismo_tools(
                         municipio=municipio,
                         limite=n,
                     ),
+                    pat_client.search_rural_conectada(
+                        provincia=provincia,
+                        municipio_o_texto=municipio,
+                        limite=n,
+                    ),
                 )
                 for s in sima_rows:
                     records.append({"bloque": "ficha_municipal_sima", **s})
@@ -306,6 +311,9 @@ def register_turismo_tools(
                 resumen_totales["itinerarios_costeros"] = cost_res["total_devueltos"]
                 for c in cost_res["puntos_itinerario"]:
                     records.append({"bloque": "itinerario_costero", **c})
+                resumen_totales["rural_conectada"] = rural_res["total_coincidencias"]
+                for r in rural_res["rutas"]:
+                    records.append({"bloque": "ruta_rural_conectada", **r})
         except Exception:
             pass
 

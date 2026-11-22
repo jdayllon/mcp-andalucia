@@ -4,10 +4,12 @@ consultados y almacenados directamente con DuckDB + NDJSON.
 
 from __future__ import annotations
 
+import io
 import json
 import re
 import time
 import xml.etree.ElementTree as ET
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -840,4 +842,184 @@ class PatrimonioMunicipiosClient:
         return {
             "total_devueltos": len(cleaned),
             "puntos_itinerario": cleaned,
+        }
+
+    async def resolve_rural_conectada_ods_url(self, dataset_or_ods_url: str | None = None) -> str:
+        """Resuelve la URL pública del fichero ODS del Programa Andalucía Rural Conectada desde CKAN."""
+        url = (dataset_or_ods_url or settings.rural_conectada_dataset_url).strip()
+        if url.lower().endswith(".ods"):
+            return url.replace(
+                "gdc-pdpopendata-ckan.paas.junta-andalucia.es",
+                "www.juntadeandalucia.es",
+            )
+
+        pkg_id = url.rstrip("/").split("/")[-1]
+        api_url = f"https://www.juntadeandalucia.es/datosabiertos/portal/api/3/action/package_show?id={pkg_id}"
+        try:
+            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+                resp = await client.get(api_url)
+                resp.raise_for_status()
+                resources = (resp.json().get("result") or {}).get("resources") or []
+                for res in resources:
+                    dl_url = str(res.get("url") or "").strip()
+                    if dl_url.lower().endswith(".ods") or str(res.get("format") or "").upper() == "ODS":
+                        return dl_url.replace(
+                            "gdc-pdpopendata-ckan.paas.junta-andalucia.es",
+                            "www.juntadeandalucia.es",
+                        )
+        except Exception as exc:
+            logger.warning("No se pudo resolver package_show de Andalucía Rural Conectada (%s), usando fallback", exc)
+
+        return settings.rural_conectada_ods_fallback_url
+
+    async def ensure_rural_conectada_loaded(
+        self,
+        url_override: str | None = None,
+        force_refresh: bool = False,
+    ) -> int:
+        """Descarga el ODS del Programa Andalucía Rural Conectada, lo convierte a NDJSON y lo carga en DuckDB."""
+        cache_key = "junta:rural_conectada"
+        if not force_refresh and not url_override and self.store.is_fresh(cache_key, settings.catalog_ttl_seconds):
+            try:
+                cnt = self.store.execute("SELECT COUNT(*) FROM rural_conectada")[0][0]
+                if cnt > 0:
+                    return int(cnt)
+            except Exception:
+                pass
+
+        ods_url = await self.resolve_rural_conectada_ods_url(url_override)
+        t0 = time.perf_counter()
+        async with httpx.AsyncClient(
+            timeout=25.0,
+            follow_redirects=True,
+            headers={"User-Agent": "mcp-andalucia/0.4"},
+        ) as client:
+            resp = await client.get(ods_url)
+            resp.raise_for_status()
+            ods_bytes = resp.content
+        logger.info(
+            "ODS Programa Andalucía Rural Conectada descargado desde %s (%d bytes, %.1f ms)",
+            ods_url,
+            len(ods_bytes),
+            (time.perf_counter() - t0) * 1000,
+        )
+
+        return self.load_rural_conectada_from_ods_bytes(ods_bytes, cache_key)
+
+    def load_rural_conectada_from_ods_bytes(
+        self,
+        ods_bytes: bytes,
+        cache_key: str = "junta:rural_conectada",
+    ) -> int:
+        """Parsea la hoja `Rutas` del fichero ODS, genera `rural_conectada.ndjson` y la carga en DuckDB."""
+        ns = {
+            "table": "urn:oasis:names:tc:opendocument:xmlns:table:1.0",
+            "text": "urn:oasis:names:tc:opendocument:xmlns:text:1.0",
+        }
+        with zipfile.ZipFile(io.BytesIO(ods_bytes)) as zf:
+            content_xml = zf.read("content.xml")
+
+        root = ET.fromstring(content_xml)
+        records: list[dict[str, Any]] = []
+
+        for tbl in root.findall(".//table:table", ns):
+            t_name = tbl.attrib.get(f"{{{ns['table']}}}name", "")
+            if t_name.lower() != "rutas":
+                continue
+
+            for row in tbl.findall("table:table-row", ns):
+                cells: list[str] = []
+                for cell in row.findall("table:table-cell", ns):
+                    repeat = int(cell.attrib.get(f"{{{ns['table']}}}number-columns-repeated", "1"))
+                    texts = ["".join(p.itertext()).strip() for p in cell.findall("text:p", ns)]
+                    val = " ".join(t for t in texts if t).strip()
+                    for _ in range(min(repeat, 10)):
+                        cells.append(val)
+                while cells and not cells[-1]:
+                    cells.pop()
+                if len(cells) < 3:
+                    continue
+                codigo, provincia, ruta = cells[0].strip(), cells[1].strip(), cells[2].strip()
+                if not codigo or not provincia or not ruta or codigo.lower() == "nombre":
+                    continue
+
+                # Separar paradas por guión largo (– / —) o guión con espacios (" - ")
+                paradas = [
+                    p.strip()
+                    for p in re.split(r"\s*[–—]\s*|\s+-\s+", ruta)
+                    if p.strip()
+                ]
+                records.append(
+                    {
+                        "codigo": codigo,
+                        "provincia": provincia,
+                        "ruta": ruta,
+                        "origen": paradas[0] if paradas else "",
+                        "destino": paradas[-1] if paradas else "",
+                        "paradas": ", ".join(paradas),
+                        "num_paradas": len(paradas),
+                        "norm_provincia": normalize_text(provincia),
+                        "norm_search": normalize_text(f"{codigo} {provincia} {ruta}"),
+                    }
+                )
+
+        ndjson_path = settings.ndjson_dir / "rural_conectada.ndjson"
+        with ndjson_path.open("w", encoding="utf-8") as f:
+            for r in records:
+                f.write(json.dumps(r, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+        count = self.store.load_ndjson_table("rural_conectada", ndjson_path)
+        self.store.mark_fresh(cache_key, count)
+        return count
+
+    async def search_rural_conectada(
+        self,
+        *,
+        provincia: str | None = None,
+        municipio_o_texto: str | None = None,
+        destino: str | None = None,
+        codigo: str | None = None,
+        url_recurso: str | None = None,
+        limite: int = 30,
+    ) -> dict[str, Any]:
+        """Consulta en DuckDB las rutas de transporte a la demanda del Programa Andalucía Rural Conectada."""
+        await self.ensure_rural_conectada_loaded(url_override=url_recurso)
+
+        clauses: list[str] = ["1=1"]
+        params: list[Any] = []
+
+        if codigo:
+            clauses.append("LOWER(codigo) = ?")
+            params.append(codigo.strip().lower())
+        if provincia:
+            clauses.append("norm_provincia LIKE ?")
+            params.append(f"%{normalize_text(provincia)}%")
+        if municipio_o_texto:
+            clauses.append("norm_search LIKE ?")
+            params.append(f"%{normalize_text(municipio_o_texto)}%")
+        if destino:
+            clauses.append("norm_search LIKE ?")
+            params.append(f"%{normalize_text(destino)}%")
+
+        where_sql = " AND ".join(clauses)
+        total_row = self.store.execute(
+            f"SELECT COUNT(*) FROM rural_conectada WHERE {where_sql}",
+            params,
+        )
+        total = int(total_row[0][0]) if total_row else 0
+
+        rows = self.store.execute_dicts(
+            f"""
+            SELECT codigo, provincia, ruta, origen, destino, paradas, num_paradas
+            FROM rural_conectada
+            WHERE {where_sql}
+            ORDER BY provincia ASC, codigo ASC
+            LIMIT ?
+            """,
+            params + [max(1, min(limite, 100))],
+        )
+        return {
+            "total_coincidencias": total,
+            "devueltos": len(rows),
+            "rutas": rows,
         }

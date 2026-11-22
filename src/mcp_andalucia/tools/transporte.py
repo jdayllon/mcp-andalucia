@@ -9,6 +9,7 @@ from mcp.server.mcpserver import MCPServer
 
 from mcp_andalucia.clients.ctan import CTANClient
 from mcp_andalucia.clients.opensky import OpenSkyClient, resolve_airport_icao
+from mcp_andalucia.clients.patrimonio_municipios import PatrimonioMunicipiosClient
 from mcp_andalucia.clients.renfe import RenfeClient
 from mcp_andalucia.utils import to_ndjson
 
@@ -18,8 +19,10 @@ def register_transporte_tools(
     renfe: RenfeClient,
     ctan: CTANClient,
     opensky: OpenSkyClient,
+    patrimonio: PatrimonioMunicipiosClient | None = None,
 ) -> None:
-    """Registra las 4 herramientas de transporte entre destinos en el servidor MCP."""
+    """Registra las 5 herramientas de transporte entre destinos en el servidor MCP."""
+    pat_client = patrimonio or PatrimonioMunicipiosClient(store=renfe.store)
 
     @mcp.tool()
     async def buscar_trenes_renfe(
@@ -124,6 +127,7 @@ def register_transporte_tools(
         tasks: list[Any] = [
             renfe.search_trains(origen=origen, destino=destino, fecha=fecha, limite=8),
             ctan.search_horarios(origen=origen, destino=destino, limite=8),
+            pat_client.search_rural_conectada(municipio_o_texto=origen, destino=destino, limite=8),
         ]
         if has_airport:
             tasks.append(opensky.get_recent_connectivity(origen=origen, destino=destino, horas_atras=36))
@@ -132,9 +136,10 @@ def register_transporte_tools(
 
         renfe_res = results[0] if not isinstance(results[0], Exception) else {"cobertura": False, "trenes": [], "error": str(results[0])}
         ctan_res = results[1] if not isinstance(results[1], Exception) else {"cobertura": False, "servicios": [], "error": str(results[1])}
+        rural_res = results[2] if not isinstance(results[2], Exception) else {"rutas": []}
         opensky_res = (
-            results[2]
-            if has_airport and not isinstance(results[2], Exception)
+            results[3]
+            if has_airport and not isinstance(results[3], Exception)
             else {"cobertura": False, "vuelos": []}
         )
 
@@ -143,13 +148,16 @@ def register_transporte_tools(
             records.append({"modo": "tren_renfe", **t})
         for b in ctan_res.get("servicios", []):
             records.append({"modo": "autobus_ctan", **b})
+        for r in rural_res.get("rutas", []):
+            records.append({"modo": "transporte_demanda_rural_conectada", **r})
         for v in opensky_res.get("vuelos", [])[:5]:
             records.append({"modo": "vuelo_opensky", **v})
 
         avisos: list[str] = []
         if not records:
             avisos.append(
-                "No se encontraron conexiones directas en Renfe AVE/LD/MD ni en los consorcios metropolitanos CTAN. "
+                "No se encontraron conexiones directas en Renfe AVE/LD/MD, en los consorcios metropolitanos CTAN "
+                "ni en el Programa Andalucía Rural Conectada. "
                 "Para trayectos interprovinciales sin tren directo puede ser necesario autobús de larga distancia o vehículo."
             )
 
@@ -162,8 +170,39 @@ def register_transporte_tools(
                 "resumen_modos": {
                     "tren_renfe": len(renfe_res.get("trenes", [])),
                     "autobus_ctan": len(ctan_res.get("servicios", [])),
+                    "rural_conectada": len(rural_res.get("rutas", [])),
                     "vuelo_opensky": len(opensky_res.get("vuelos", [])),
                 },
                 "avisos": avisos,
+            },
+        )
+
+    @mcp.tool()
+    async def buscar_transporte_rural_conectada(
+        provincia: str | None = None,
+        municipio_o_texto: str | None = None,
+        destino: str | None = None,
+        codigo: str | None = None,
+        limite: int = 30,
+    ) -> str:
+        """Consulta en DuckDB las rutas de transporte público interurbano a la demanda del Programa Andalucía Rural Conectada.
+
+        Conecta núcleos rurales (taxi/transporte a demanda a tarifa de transporte público) con sus municipios de referencia.
+        Permite buscar por `provincia`, `municipio_o_texto` (origen o parada), `destino` o `codigo` de ruta (ej. 'AL1', 'SE3').
+        Devuelve los resultados en formato NDJSON.
+        """
+        res = await pat_client.search_rural_conectada(
+            provincia=provincia,
+            municipio_o_texto=municipio_o_texto,
+            destino=destino,
+            codigo=codigo,
+            limite=limite,
+        )
+        return to_ndjson(
+            res["rutas"],
+            meta={
+                "fuente": "Junta de Andalucía - Programa Andalucía Rural Conectada (DuckDB)",
+                "total_coincidencias": res["total_coincidencias"],
+                "devueltos": res["devueltos"],
             },
         )

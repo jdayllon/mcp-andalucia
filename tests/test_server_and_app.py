@@ -16,7 +16,7 @@ from mcp_andalucia.server import create_mcp_server
 
 
 @pytest.mark.asyncio
-async def test_mcp_server_registers_all_20_tools():
+async def test_mcp_server_registers_all_21_tools():
     mcp = create_mcp_server()
     tools = await mcp.list_tools()
     tool_names = {t.name for t in tools}
@@ -38,6 +38,7 @@ async def test_mcp_server_registers_all_20_tools():
         "buscar_autobuses_ctan",
         "consultar_conectividad_aerea",
         "recomendar_transporte_entre_destinos",
+        "buscar_transporte_rural_conectada",
         "buscar_paradas_urbanas_cercanas",
         "consultar_tiempo_real_bus_urbano",
         "consultar_linea_urbana",
@@ -328,4 +329,40 @@ async def test_declaraciones_and_sima_in_duckdb(tmp_path: Path, monkeypatch):
     assert res_cost["total_devueltos"] == 1
     assert res_cost["puntos_itinerario"][0]["nombre"] == "Puerto pesquero de Isla Cristina"
     assert res_cost["puntos_itinerario"][0]["distancia_km"] < 1.0
+
+    # 5. Probar carga ODS y búsqueda del Programa Andalucía Rural Conectada en DuckDB
+    import io
+    import zipfile
+
+    content_xml = """<?xml version="1.0" encoding="UTF-8"?>
+    <office:document-content
+        xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+        xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"
+        xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">
+      <office:body><office:spreadsheet>
+        <table:table table:name="Rutas">
+          <table:table-row>
+            <table:table-cell><text:p>Nombre</text:p></table:table-cell>
+            <table:table-cell><text:p>Provincia</text:p></table:table-cell>
+            <table:table-cell><text:p>Ruta</text:p></table:table-cell>
+          </table:table-row>
+          <table:table-row>
+            <table:table-cell><text:p>AL3</text:p></table:table-cell>
+            <table:table-cell><text:p>Almería</text:p></table:table-cell>
+            <table:table-cell><text:p>Lucainena de las Torres - Turrillas – Tabernas</text:p></table:table-cell>
+          </table:table-row>
+        </table:table>
+      </office:spreadsheet></office:body>
+    </office:document-content>"""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("content.xml", content_xml)
+    cnt_r = pat.load_rural_conectada_from_ods_bytes(buf.getvalue())
+    assert cnt_r == 1
+
+    res_rural = await pat.search_rural_conectada(municipio_o_texto="Lucainena", destino="Tabernas")
+    assert res_rural["total_coincidencias"] == 1
+    assert res_rural["rutas"][0]["codigo"] == "AL3"
+    assert res_rural["rutas"][0]["origen"] == "Lucainena de las Torres"
+    assert res_rural["rutas"][0]["destino"] == "Tabernas"
     store.close()

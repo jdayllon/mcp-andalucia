@@ -108,6 +108,14 @@ class Settings(BaseSettings):
         "b49dd947-b2dc-429e-9840-930b7446cf0d/resource/72a23333-7659-4c4f-8ff5-38547dec8617/"
         "download/atlazul-itinerarios-turisticos-costeros_230602.xml"
     )
+    rural_conectada_dataset_url: str = (
+        "https://www.juntadeandalucia.es/datosabiertos/portal/dataset/programa-andalucia-rural-conectada"
+    )
+    rural_conectada_ods_fallback_url: str = (
+        "https://www.juntadeandalucia.es/datosabiertos/portal/dataset/"
+        "34a3d58d-dfa3-4760-924e-793ee47e240e/resource/ca29f8c1-0e5f-4447-86aa-00f7025cddbb/"
+        "download/rutas-integradas-en-el-marco-del-programa_17122025.ods"
+    )
 
     # TTL de caché en segundos
     catalog_ttl_seconds: int = 86400  # 24h para catálogos OpenRTA y CTAN

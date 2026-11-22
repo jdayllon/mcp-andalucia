@@ -7,6 +7,7 @@ Servidor **MCP (Model Context Protocol)** construido con **FastAPI**, **DuckDB**
 - **Datos Municipales SIMA ("Andalucía pueblo a pueblo")**: [Fichas de los 785 municipios del IECA (`smex99.xls`)](https://www.juntadeandalucia.es/institutodeestadisticaycartografia/sima/datos/smex99.xls)
 - **Banderas Azules de Andalucía**: [Playas, puertos deportivos y embarcaciones (`banderas_azules_2026-27.json`)](https://www.juntadeandalucia.es/datosabiertos/portal/dataset/6b186c12-2fd9-450d-a325-02052e2fe352/resource/e93bbb0c-5b31-4c59-8cf0-801b59fea253/download/banderas_azules_2026-27.json)
 - **Itinerarios Turísticos Costeros (ATLAZUL)**: [Rutas y puntos de interés costeros geolocalizados (Junta de Andalucía)](https://www.juntadeandalucia.es/datosabiertos/portal/dataset/itinerarios-turisticos-costeros/resource/72a23333-7659-4c4f-8ff5-38547dec8617)
+- **Programa Andalucía Rural Conectada**: [Rutas de transporte público interurbano a la demanda (Junta de Andalucía)](https://www.juntadeandalucia.es/datosabiertos/portal/dataset/programa-andalucia-rural-conectada)
 - **Autobuses interurbanos (CTAN)**: [Red de Consorcios de Transporte de Andalucía](https://api.ctan.es/doc/)
 - **Trenes AVE / Larga Distancia / Media Distancia (Renfe)**: [Open Data Renfe (GTFS + GTFS-RT)](https://data.renfe.com/dataset?res_format=JSON)
 - **Conectividad aérea (OpenSky Network)**: [OpenSky REST API](https://opensky-network.org)
@@ -71,8 +72,9 @@ El servidor quedará disponible en `http://127.0.0.1:8000/mcp` (Streamable HTTP)
 ### Transporte entre destinos
 9. `buscar_trenes_renfe`: consulta SQL en DuckDB sobre el GTFS AVE/LD/MD de Renfe + retrasos en tiempo real.
 10. `buscar_autobuses_ctan`: horarios interurbanos en los 9 Consorcios Metropolitanos de Andalucía.
-11. `consultar_conectividad_aerea`: rutas recientes observadas en aeropuertos andaluces vía OpenSky.
-12. `recomendar_transporte_entre_destinos`: comparativa multimodal (Renfe + CTAN + OpenSky) entre dos destinos.
+15. `consultar_conectividad_aerea`: rutas recientes observadas en aeropuertos andaluces vía OpenSky.
+16. `recomendar_transporte_entre_destinos`: comparativa multimodal (Renfe + CTAN + Andalucía Rural Conectada + OpenSky) entre dos destinos.
+17. `buscar_transporte_rural_conectada`: rutas interurbanas a la demanda del Programa Andalucía Rural Conectada en DuckDB.
 
 ### Transporte urbano local (con Haversine en DuckDB)
 13. `buscar_paradas_urbanas_cercanas`: paradas de autobús/metro cercanas a coordenadas `lat`/`lon` o a una calle/CP (TUSSAM Sevilla, EMT Málaga, AUCORSA Córdoba, Granada, Metros).
