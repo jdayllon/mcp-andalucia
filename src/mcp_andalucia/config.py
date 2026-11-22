@@ -81,6 +81,20 @@ class Settings(BaseSettings):
     nap_api_key: str | None = None
     nominatim_url: str = "https://nominatim.openstreetmap.org/search"
 
+    # Declaraciones de Interés Turístico (Portal Datos Abiertos Junta) y SIMA (IECA)
+    declaraciones_resource_url: str = (
+        "https://www.juntadeandalucia.es/datosabiertos/portal/dataset/"
+        "declaraciones-de-interes-turistico-en-andalucia/resource/827cb3e2-fe05-4c37-92d3-ed31f2935f35"
+    )
+    declaraciones_csv_fallback_url: str = (
+        "https://www.juntadeandalucia.es/datosabiertos/portal/dataset/"
+        "9c1437e9-98bd-41e5-84cf-6bf678037b1b/resource/827cb3e2-fe05-4c37-92d3-ed31f2935f35/"
+        "download/dataset_interes_turistico_07072026.csv"
+    )
+    sima_municipios_xls_url: str = (
+        "https://www.juntadeandalucia.es/institutodeestadisticaycartografia/sima/datos/smex99.xls"
+    )
+
     # TTL de caché en segundos
     catalog_ttl_seconds: int = 86400  # 24h para catálogos OpenRTA y CTAN
     renfe_gtfs_ttl_seconds: int = 86400  # 24h para GTFS estático de Renfe

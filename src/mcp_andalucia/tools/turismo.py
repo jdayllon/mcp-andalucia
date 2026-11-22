@@ -8,6 +8,7 @@ from typing import Any, Literal
 from mcp.server.mcpserver import MCPServer
 
 from mcp_andalucia.clients.openrta import OpenRTAClient
+from mcp_andalucia.clients.patrimonio_municipios import PatrimonioMunicipiosClient
 from mcp_andalucia.utils import normalize_text, to_ndjson
 
 ALOJAMIENTO_TYPES: dict[str, str] = {
@@ -31,8 +32,13 @@ ACTIVIDADES_TYPES: tuple[str, ...] = (
 )
 
 
-def register_turismo_tools(mcp: MCPServer, client: OpenRTAClient) -> None:
-    """Registra las 8 herramientas de oferta turística de OpenRTA en el servidor MCP."""
+def register_turismo_tools(
+    mcp: MCPServer,
+    client: OpenRTAClient,
+    patrimonio: PatrimonioMunicipiosClient | None = None,
+) -> None:
+    """Registra las herramientas de oferta turística (OpenRTA), Declaraciones de Interés Turístico y SIMA."""
+    pat_client = patrimonio or PatrimonioMunicipiosClient(store=client.store)
 
     @mcp.tool()
     async def buscar_alojamientos(
@@ -263,10 +269,33 @@ def register_turismo_tools(mcp: MCPServer, client: OpenRTAClient) -> None:
             for item in resp.get("results", []):
                 records.append({"bloque": bloque, **item})
 
+        # Enriquecer con ficha municipal SIMA y Declaraciones de Interés Turístico en DuckDB
+        try:
+            if municipio or provincia:
+                sima_rows, decl_res = await asyncio.gather(
+                    pat_client.get_municipio_sima(
+                        municipio=municipio,
+                        provincia=provincia,
+                        limite=1 if municipio else 3,
+                    ),
+                    pat_client.search_declaraciones(
+                        provincia=provincia,
+                        municipio=municipio,
+                        limite=n,
+                    ),
+                )
+                for s in sima_rows:
+                    records.append({"bloque": "ficha_municipal_sima", **s})
+                resumen_totales["declaraciones_interes_turistico"] = decl_res["total_coincidencias"]
+                for d in decl_res["declaraciones"]:
+                    records.append({"bloque": "declaracion_interes_turistico", **d})
+        except Exception:
+            pass
+
         return to_ndjson(
             records,
             meta={
-                "fuente": "OpenRTA",
+                "fuente": "OpenRTA + SIMA + Declaraciones Interés Turístico",
                 "destino": {"provincia": provincia, "municipio": municipio},
                 "totales_por_bloque": resumen_totales,
                 "devueltos": len(records),
@@ -337,5 +366,94 @@ def register_turismo_tools(mcp: MCPServer, client: OpenRTAClient) -> None:
                 "accion": "buscar",
                 "total_disponibles": res["total_hits"],
                 "devueltos": res["hits"],
+            },
+        )
+
+    @mcp.tool()
+    async def buscar_declaraciones_interes_turistico(
+        provincia: str | None = None,
+        municipio: str | None = None,
+        tipo: str | None = None,
+        ambito: str | None = None,
+        texto: str | None = None,
+        url_recurso: str | None = None,
+        limite: int = 20,
+    ) -> str:
+        """Consulta con DuckDB las Declaraciones de Interés Turístico de Andalucía (fiestas, romerías, semanas santas, municipios turísticos).
+
+        Permite filtrar por `provincia`, `municipio`, `tipo` (ej. 'Fiesta'), `ambito` ('Autonómico', 'Nacional')
+        o `texto` libre en nombre/descripción. Devuelve los resultados en formato NDJSON.
+        """
+        res = await pat_client.search_declaraciones(
+            provincia=provincia,
+            municipio=municipio,
+            tipo=tipo,
+            ambito=ambito,
+            texto=texto,
+            url_recurso=url_recurso,
+            limite=limite,
+        )
+        return to_ndjson(
+            res["declaraciones"],
+            meta={
+                "fuente": "Junta de Andalucía - Declaraciones de Interés Turístico (DuckDB)",
+                "total_coincidencias": res["total_coincidencias"],
+                "devueltos": res["devueltos"],
+            },
+        )
+
+    @mcp.tool()
+    async def consultar_municipios_sima(
+        accion: Literal["ficha", "cercanos"] = "ficha",
+        municipio: str | None = None,
+        provincia: str | None = None,
+        cod_ine: str | None = None,
+        lat: float | None = None,
+        lon: float | None = None,
+        radio_km: float = 25.0,
+        incluir_124_variables: bool = False,
+        limite: int = 15,
+    ) -> str:
+        """Consulta en DuckDB los datos oficiales de los 785 municipios de Andalucía del SIMA ('Andalucía pueblo a pueblo', `smex99.xls`).
+
+        - `accion='ficha'`: devuelve coordenadas del núcleo principal (`lat`, `lon`), altitud, población,
+          distancia a la capital, plazas hoteleras, taxis, patrimonio histórico del IAPH (bienes muebles,
+          inmuebles, inmateriales y enlace a la Guía Digital del IAPH) y opcionalmente las 124 variables completas.
+        - `accion='cercanos'`: busca pueblos cercanos a `municipio` (o a `lat`/`lon`) dentro de `radio_km`
+          usando cálculo espacial Haversine en DuckDB para diseñar rutas de pueblos y excursiones.
+        """
+        if accion == "cercanos":
+            res = await pat_client.find_nearby_municipios_sima(
+                municipio_origen=municipio,
+                lat=lat,
+                lon=lon,
+                radio_km=radio_km,
+                limite=limite,
+            )
+            return to_ndjson(
+                res["municipios"],
+                meta={
+                    "fuente": "SIMA IECA - Andalucía pueblo a pueblo (DuckDB Haversine)",
+                    "accion": "cercanos",
+                    "origen": res["origen"],
+                    "radio_km": res["radio_km"],
+                    "total_en_radio": res["total_en_radio"],
+                    "devueltos": len(res["municipios"]),
+                },
+            )
+
+        rows = await pat_client.get_municipio_sima(
+            municipio=municipio,
+            provincia=provincia,
+            cod_ine=cod_ine,
+            incluir_124_variables=incluir_124_variables,
+            limite=limite,
+        )
+        return to_ndjson(
+            rows,
+            meta={
+                "fuente": "SIMA IECA - Andalucía pueblo a pueblo (DuckDB)",
+                "accion": "ficha",
+                "devueltos": len(rows),
             },
         )

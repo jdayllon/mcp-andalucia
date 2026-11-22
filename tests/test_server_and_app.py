@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from mcp_andalucia.app import app
 from mcp_andalucia.clients.opensky import resolve_airport_icao
+from mcp_andalucia.clients.patrimonio_municipios import PatrimonioMunicipiosClient
 from mcp_andalucia.clients.renfe import RenfeClient
 from mcp_andalucia.clients.urbano import UrbanoClient
 from mcp_andalucia.db import DuckDBStore
@@ -15,7 +16,7 @@ from mcp_andalucia.server import create_mcp_server
 
 
 @pytest.mark.asyncio
-async def test_mcp_server_registers_all_16_tools():
+async def test_mcp_server_registers_all_18_tools():
     mcp = create_mcp_server()
     tools = await mcp.list_tools()
     tool_names = {t.name for t in tools}
@@ -29,6 +30,8 @@ async def test_mcp_server_registers_all_16_tools():
         "explorar_destino",
         "obtener_detalle_elemento",
         "buscar_en_registro",
+        "buscar_declaraciones_interes_turistico",
+        "consultar_municipios_sima",
         "buscar_trenes_renfe",
         "buscar_autobuses_ctan",
         "consultar_conectividad_aerea",
@@ -178,4 +181,75 @@ async def test_urbano_haversine_and_street_fallback_in_duckdb(tmp_path: Path, mo
     res_line = await urbano.get_line_stops(ciudad="sevilla", linea="C4")
     assert res_line["total_paradas"] == 1
     assert res_line["paradas"][0]["codigo_parada"] == "43"
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_declaraciones_and_sima_in_duckdb(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("mcp_andalucia.config.settings.data_dir", tmp_path)
+    store = DuckDBStore(db_path=tmp_path / "patrimonio_test.duckdb")
+    pat = PatrimonioMunicipiosClient(store=store)
+
+    # 1. Probar carga y consulta de Declaraciones de Interés Turístico con DuckDB read_csv (delim='=')
+    csv_file = tmp_path / "declaraciones_sample.csv"
+    csv_file.write_text(
+        "DECLARACIÓN DE INTERÉS TURÍSTICO =LOCALIDAD=PROVINCIA=FECHA DE RESOLUCIÓN=ÁMBITO=PROMOTOR=TIPO=BOLETÍN=URL =DESCRIPCIÓN\n"
+        'Romería de Nuestra Señora de los Ángeles =Alajar=Huelva =24/01/1970=Autonómico=Ayuntamiento de Alajar=Fiesta==="Romería tradicional en la Peña de Arias Montano."\n'
+        'Real Feria de la Vendimia=La Palma del Condado=Huelva =04/02/1972=Autonómico=Ayuntamiento=Fiesta==="Feria de septiembre dedicada al vino."\n',
+        encoding="utf-8",
+    )
+    cnt = pat.load_declaraciones_from_csv_with_duckdb(csv_file)
+    assert cnt == 2
+
+    res_decl = await pat.search_declaraciones(provincia="Huelva", municipio="Alájar")
+    assert res_decl["total_coincidencias"] == 1
+    assert "Romería" in res_decl["declaraciones"][0]["nombre"]
+
+    # 2. Probar consulta de municipios SIMA y pueblos cercanos con Haversine en DuckDB
+    sima_ndjson = tmp_path / "ndjson" / "municipios_sima.ndjson"
+    sima_ndjson.parent.mkdir(parents=True, exist_ok=True)
+    sima_rows = [
+        {
+            "cod_ine": "04001",
+            "municipio": "Abla",
+            "provincia": "Almería",
+            "lat": 37.141,
+            "lon": -2.78,
+            "altitud_m": 843,
+            "poblacion": 1267,
+            "plazas_hoteles": 20,
+            "total_patrimonio_iaph": 67,
+            "url_guia_iaph": "https://guiadigital.iaph.es/municipio/280/abla",
+            "norm_municipio": "abla",
+            "norm_provincia": "almeria",
+            "indicadores_json": '{"Población total. 2025": 1267}',
+        },
+        {
+            "cod_ine": "04002",
+            "municipio": "Abrucena",
+            "provincia": "Almería",
+            "lat": 37.133,
+            "lon": -2.797,
+            "altitud_m": 976,
+            "poblacion": 1200,
+            "plazas_hoteles": 15,
+            "total_patrimonio_iaph": 40,
+            "url_guia_iaph": "https://guiadigital.iaph.es/municipio/281/abrucena",
+            "norm_municipio": "abrucena",
+            "norm_provincia": "almeria",
+            "indicadores_json": '{"Población total. 2025": 1200}',
+        },
+    ]
+    sima_ndjson.write_text("\n".join(json.dumps(r) for r in sima_rows) + "\n", encoding="utf-8")
+    store.load_ndjson_table("municipios_sima", sima_ndjson)
+    store.mark_fresh("junta:municipios_sima", 2)
+
+    ficha = await pat.get_municipio_sima(municipio="Abla", incluir_124_variables=True)
+    assert len(ficha) == 1
+    assert ficha[0]["cod_ine"] == "04001"
+    assert ficha[0]["indicadores_completos"]["Población total. 2025"] == 1267
+
+    cercanos = await pat.find_nearby_municipios_sima(municipio_origen="Abla", radio_km=10.0)
+    assert cercanos["total_en_radio"] == 2
+    assert cercanos["municipios"][1]["municipio"] == "Abrucena"
     store.close()

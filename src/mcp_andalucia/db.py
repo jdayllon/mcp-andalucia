@@ -194,6 +194,45 @@ class DuckDBStore:
         logger.info("DuckDB tabla '%s' cargada desde NDJSON: %d filas (%.1f ms)", table_name, count, elapsed_ms)
         return count
 
+    def load_csv_table(
+        self,
+        table_name: str,
+        csv_source: str | Path,
+        *,
+        delim: str = ",",
+        quote: str = '"',
+    ) -> int:
+        """Crea o reemplaza una tabla en DuckDB leyendo un CSV (local o URL) con `read_csv` de DuckDB."""
+        t0 = time.perf_counter()
+        with self._lock:
+            self._conn.execute(
+                f"""
+                CREATE OR REPLACE TABLE {table_name} AS
+                SELECT * FROM read_csv(
+                    ?,
+                    delim=?,
+                    quote=?,
+                    header=true,
+                    all_varchar=true,
+                    ignore_errors=true
+                )
+                """,
+                [str(csv_source), delim, quote],
+            )
+            count_row = self._conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()
+            count = int(count_row[0]) if count_row else 0
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        logger.info("DuckDB tabla '%s' cargada con read_csv: %d filas (%.1f ms)", table_name, count, elapsed_ms)
+        return count
+
+    def export_table_to_ndjson(self, table_name: str, ndjson_path: Path) -> None:
+        """Exporta una tabla de DuckDB a formato NDJSON nativo usando COPY ... (FORMAT JSON)."""
+        with self._lock:
+            self._conn.execute(
+                f"COPY {table_name} TO ? (FORMAT JSON)",
+                [str(ndjson_path)],
+            )
+
     def get_cached_response(self, cache_key: str) -> Any | None:
         """Recupera una respuesta cacheada si no ha expirado."""
         now = time.time()
